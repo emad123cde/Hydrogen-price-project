@@ -12,18 +12,52 @@ FFNN_workspace/ffnn_code.py
 
 The FFNN script trains a Feed Forward Neural Network to predict the next electricity price value.
 
-The dataset already includes:
+The target column is:
 
-- lagged price features
-- rolling price statistics
-- time features
-- weather data
-- market variables
-- engineered numerical features
+```text
+target
+```
 
-The model uses the `target` column as the value to predict.
+The target represents the next-hour ENTSO-E electricity price.
 
 The `timestamp` column is only used for graph labels. It is not used as a model input.
+
+## Dataset Context
+
+This project currently uses a working sample dataset from the rich Plan B preprocessing pipeline.
+
+The dataset covers the period from December 2025 to February 2026. The time window is small, but the dataset is already cleaned, scaled, engineered, and split chronologically.
+
+Current split sizes:
+
+```text
+Train: 1006 rows
+Validation: 215 rows
+Test: 217 rows
+```
+
+Each file has 75 columns in total, including the target column. The model uses 74 engineered input features.
+
+The features include:
+
+- lagged price features
+- 1 hour, 24 hour, and 168 hour price lags
+- rolling statistics
+- cyclical time encoding
+- weather data
+- wind data
+- solar data
+- calendar features
+- load forecast and load actual values
+- market variables such as gas and carbon prices
+- cross-border electricity flows
+- other engineered numerical features
+
+The project also includes scalers for X and Y in the preprocessing pipeline, so predictions can be converted back to the original price scale.
+
+Important: this dataset only covers around 3 months of data. It is useful for checking the code, testing the model architecture, and confirming that the pipeline works. It should not be used to judge final model performance.
+
+For proper long-history training, the project will still need Lochan's Option A pipeline with around 17 months of basic features.
 
 ## Files
 
