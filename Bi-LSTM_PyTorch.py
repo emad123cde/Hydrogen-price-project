@@ -1,5 +1,5 @@
 """
-Bi-directioneel LSTM (Bi-LSTM) met PyTorch
+Bi-directional LSTM (Bi-LSTM) with PyTorch
 """
 # %% Section 1: Prepare the workspace
 import pandas as pd
@@ -54,9 +54,21 @@ class BiLSTM(nn.Module):
 
 def create_sequences(X, y, seq_length, pred_steps):                 # Convert flat data into 3D sequences for LSTM input
     xs, ys = [], []
-    for i in range(len(X) - seq_length - pred_steps):
+    for i in range(len(X) - seq_length - pred_steps + 1):
         x_block = X[i : i + seq_length]
         y_target = y[i + seq_length : i + seq_length + pred_steps]  # Next pred_steps hours as target
+        xs.append(x_block)
+        ys.append(y_target)
+    return np.array(xs), np.array(ys)
+
+def create_sequences_with_context(X_context, X_target, y_target, seq_length, pred_steps):  # Similar to create_sequences but adds context from previous data
+    X_combined = np.concatenate([X_context, X_target], axis=0) 
+    y_combined = np.concatenate([np.zeros(seq_length), y_target], axis=0)  
+
+    xs, ys = [], []
+    for i in range(len(X_target) - pred_steps + 1):
+        x_block = X_combined[i : i + seq_length]  # Add context to the beginning of the sequence
+        y_target = y[i + seq_length : i + seq_length + pred_steps]
         xs.append(x_block)
         ys.append(y_target)
     return np.array(xs), np.array(ys)
@@ -100,58 +112,74 @@ def evaluate(model, loader, criterion, device):         # Handles the validation
 
 
 # %% Section 4: Data Preparation
-data = pd.read_csv("merged_hourly.csv")
+data = pd.read_csv("cleaned_hourly.csv")
 
-X = data.iloc[:, 0:10].values                   # Feature selection
-y = data.iloc[:, -1].values                     # Target as column-vector for scaler
+X = data.loc[:, ['temperature_celsius', 'wind_speed_m_per_s', 'sun_radiation_W_per_m2']].values                   # Feature selection
+y = data.loc[:, 'price_eur_per_mwh']                    # Target as column-vector for scaler
 m, n = X.shape
 
-total_days = len(data) // 24
-val_days = 7
-train_days = total_days - val_days
+total_days = m // 24
+val_days = 3
+test_days = 3
+train_days = total_days - val_days - test_days
 
-m_train = train_days * 24
-m_val = val_days * 24
+m_train = train_days    * 24
+m_val   = val_days      * 24
+m_test  = test_days     * 24
 
-X_train = X[:m_train, :]
+X_train = X[:m_train]
 y_train = y[:m_train]
-X_val = X[m_train:m_train + m_val, :]
+X_val = X[m_train:m_train + m_val]
 y_val = y[m_train:m_train + m_val]
+X_test = X[m_train + m_val:m_train + m_val + m_test]
+y_test = y[m_train + m_val:m_train + m_val + m_test]
 
 # Normalisation of features (X)
 mu_x = np.mean(X_train, axis=0)
 sigma_x = np.std(X_train, axis=0)
 X_train = (X_train - mu_x) / sigma_x
 X_val = (X_val - mu_x) / sigma_x
+X_test = (X_test - mu_x) / sigma_x
 
 # Normalisation of Target (y)
 mu_y = np.mean(y_train)
 sigma_y = np.std(y_train)
 y_train = (y_train - mu_y) / sigma_y
 y_val = (y_val - mu_y) / sigma_y
+y_test = (y_test - mu_y) / sigma_y
 
-# Maak de 3D blokken voor training en validatie
+# Make the 3D bloks voor training, validation and testing
 X_train_3D, y_train_3D = create_sequences(X_train, y_train, SEQ_LEN, NUM_CLASSES)
-X_val_3D, y_val_3D     = create_sequences(X_val, y_val, SEQ_LEN, NUM_CLASSES)
 
-# Converteren naar PyTorch tensors
+X_val_context = X_train[-SEQ_LEN:]  # Use the last SEQ_LEN samples from training as context for validation
+X_test_context = X_val[-SEQ_LEN:]    # Use the last SEQ_LEN samples from validation as context for testing
+
+X_val_3D, y_val_3D     = create_sequences_with_context(X_val_context, X_val, y_val, SEQ_LEN, NUM_CLASSES)
+X_test_3D, y_test_3D   = create_sequences_with_context(X_test_context, X_test, y_test, SEQ_LEN, NUM_CLASSES)
+
+print(f"Train sequences: {len(X_train_3D)}, Validation sequences: {len(X_val_3D)}, Test sequences: {len(X_test_3D)}")
+
+# Convert to PyTorch tensors
 X_train_tensor = torch.from_numpy(X_train_3D).float()
 y_train_tensor = torch.from_numpy(y_train_3D).float()
 X_val_tensor   = torch.from_numpy(X_val_3D).float()
 y_val_tensor   = torch.from_numpy(y_val_3D).float()
+X_test_tensor  = torch.from_numpy(X_test_3D).float()
+y_test_tensor  = torch.from_numpy(y_test_3D).float()
 
 INPUT_SIZE = X_train_tensor.shape[2]                    # Number of features per timestep (input dimension)
 
 train_ds = TensorDataset(X_train_tensor, y_train_tensor)
 val_ds   = TensorDataset(X_val_tensor, y_val_tensor)
+test_ds  = TensorDataset(X_test_tensor, y_test_tensor)
 
 train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
 val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE)
+test_loader  = DataLoader(test_ds, batch_size=BATCH_SIZE)
 
 
 # %% Section 5: Define the BiLSTM model
-model = BiLSTM(INPUT_SIZE, HIDDEN_SIZE, NUM_LAYERS,
-               NUM_CLASSES, DROPOUT).to(device)
+model = BiLSTM(INPUT_SIZE, HIDDEN_SIZE, NUM_LAYERS, NUM_CLASSES, DROPOUT).to(device)
 print(model)
 print(f"\nAantal parameters: {sum(p.numel() for p in model.parameters()):,}\n")
 
@@ -216,7 +244,7 @@ with torch.no_grad():
         X_batch = X_batch.to(device)
         outputs = model(X_batch)
         
-        # Terugrekenen naar echte prijzen
+        # calculate back to real prices
         preds = (outputs.cpu().numpy() * sigma_y) + mu_y
         actuals = (y_batch.numpy() * sigma_y) + mu_y
         
@@ -235,3 +263,8 @@ plt.ylabel('Price (€)')
 plt.xlabel('Time (hours)')
 plt.legend()
 plt.show()
+
+
+# %% Section 12: Final evaluation on the test set
+test_loss = evaluate(model, test_loader, criterion, device)
+print(f"\nTest MSE: {test_loss:.4f}")
